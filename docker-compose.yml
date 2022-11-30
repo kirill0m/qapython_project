@@ -1,0 +1,94 @@
+version: "3.9"
+services:
+  db:
+    container_name: $MYSQL_NAME
+    image: mysql:latest
+    environment:
+      - MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
+      - MYSQL_DATABASE=$MYSQL_DATABASE
+    volumes:
+      - ./mysql:/docker-entrypoint-initdb.d
+    ports:
+      - $MYSQL_PORT:$MYSQL_PORT
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+      
+  myapp:
+    container_name: $APP_NAME
+    image: myapp:latest
+    command: /app/myapp --config=/config/config.txt
+    ports:
+      - $APP_PORT:$APP_PORT
+    volumes:
+      - ./app/config:/config
+    depends_on:
+      db:
+        condition: service_healthy
+      mock_service:
+        condition: service_started
+       
+        
+  selenoid:
+    container_name: $SELENOID_NAME
+    image: aerokube/selenoid
+    ports:
+      - $SELENOID_PORT:$SELENOID_PORT
+    volumes:
+      - ./selenoid:/etc/selenoid
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["-conf", "/etc/selenoid/browsers.json", "-container-network", "ui-test_selenoid"]
+
+  selenoid-ui:
+    container_name: $SELENOID_UI_NAME
+    image: aerokube/selenoid-ui
+    depends_on:
+      - $SELENOID_NAME
+    ports:
+      - $SELENOID_UI_PORT:$SELENOID_UI_PORT
+    command: --selenoid-uri=http://$SELENOID_NAME:$SELENOID_PORT
+   
+  test_myapp:
+    build:
+      context: ./project
+    environment:
+      SELENOID_NAME: $SELENOID_NAME
+      SELENOID_PORT: $SELENOID_PORT
+      APP_NAME: $APP_NAME
+      APP_PORT: $APP_PORT
+      USER_NAME: $USER_NAME
+      USER_PASSWORD: $USER_PASSWORD
+      MYSQL_NAME: $MYSQL_NAME
+      MYSQL_PORT: $MYSQL_PORT
+      MYSQL_ROOT_PASSWORD: $MYSQL_ROOT_PASSWORD
+      MYSQL_DATABASE: $MYSQL_DATABASE
+      MOCK_HOST: $MOCK_HOST
+      MOCK_PORT: $MOCK_PORT
+    ports:
+      - 2345:2345
+    command: sh -c "pytest -n2 --alluredir=allure-reports"
+    volumes:
+      - ./project:/test_myapp
+      - ./allure-reports:/allure-reports
+    depends_on:
+      - myapp
+      
+  mock_service:
+    container_name: $MOCK_HOST
+    build:
+      context: ./mock_service
+    environment:
+      - MOCK_PORT=$MOCK_PORT
+      - MOCK_HOST=$MOCK_HOST
+    command: sh -c "python flask_mock.py"
+    volumes:
+      - ./mock_service:/mock
+    ports:
+      - $MOCK_PORT:$MOCK_PORT
+        
+
+networks:
+  default:
+    name: ui-test_selenoid
+    external: true
